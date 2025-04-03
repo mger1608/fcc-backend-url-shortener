@@ -5,13 +5,14 @@ const app = express();
 const bodyParser = require('body-parser');
 const dns = require('dns');
 const mongoose = require('mongoose');
-const { error } = require('console');
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
 // URL schema
 const urlSchema = new mongoose.Schema({
@@ -19,15 +20,15 @@ const urlSchema = new mongoose.Schema({
   short_url: { type: Number, required: true },
 });
 
+// URL model
 const Url = mongoose.model('Url', urlSchema);
 
-
 app.use(cors());
-app.use(bodyParser.urlencoded({ extended: false })); // Use body-parser middleware
+app.use(bodyParser.urlencoded({ extended: false }));
 
 app.use('/public', express.static(`${process.cwd()}/public`));
 
-app.get('/', function(req, res) {
+app.get('/', function (req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
 });
 
@@ -35,7 +36,7 @@ app.get('/', function(req, res) {
 app.post('/api/shorturl', (req, res) => {
   const originalUrl = req.body.url;
 
-  // Validate URL
+  // Validate URL format
   const urlRegex = /^(http|https):\/\/[www.]?[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}(\/\S*)?$/;
   if (!urlRegex.test(originalUrl)) {
     return res.json({ error: 'invalid url' });
@@ -45,52 +46,47 @@ app.post('/api/shorturl', (req, res) => {
   const hostname = new URL(originalUrl).hostname;
   dns.lookup(hostname, (err, address, family) => {
     if (err) {
-      console.error("dns.lookup error:", err); // Log dns.lookup errors
-      return res.json({ error: 'invalid url'});
-    } else {
-      // Generate short URL
-        Url.estimatedDocumentCount({}, (err, count) => {
-          if (err) {
-            console.error("estimatedDocumentCount error:", err); // Log errors
-            return res.json({ error: 'database error' });
-          }
-          const shortUrl = count + 1;
+      console.error('dns.lookup error:', err);
+      return res.json({ error: 'invalid url' });
+    }
 
-          // Store URL mapping in MongoDB
-          const newUrl = new url({ original_url: originalUrl, short_url: shortUrl });
-          newUrl.save()
-            .then((savedUrl) => {
-              res.json({ original_url: savedUrl.original_url, short_url: savedUrl.short_url });
-            })
-            .catch((err) => {
-              console.error("Error saving URL:", err); // Log save error
-              res.status(500).json({ error: 'database error' });
-            });
-        });
-      }
-   });
+    Url.estimatedDocumentCount({})
+      .then(count => {
+        const shortUrl = count + 1;
+        const newUrl = new Url({ original_url: originalUrl, short_url: shortUrl });
+        return newUrl.save();
+      })
+      .then(savedUrl => {
+        console.log('URL saved:', savedUrl);
+        res.json({ original_url: savedUrl.original_url, short_url: savedUrl.short_url });
+      })
+      .catch(err => {
+        console.error('Error saving URL:', err);
+        res.status(500).json({ error: 'database error' });
+      });
+  });
 });
 
 // Redirect to original URL
-app.get('api/shorturl/:shorturl', (req, res) => {
-  const shortUrl = req.params.shorturl;
+app.get('/api/shorturl/:short_url', (req, res) => {
+  const shortUrl = req.params.short_url;
 
-  // Find URL mapping in MongoDB
   Url.findOne({ short_url: shortUrl })
-    .then((foundUrl) => {
+    .then(foundUrl => {
       if (foundUrl) {
+        console.log('Redirecting to:', foundUrl.original_url);
         res.redirect(foundUrl.original_url);
       } else {
+        console.log('Short URL not found:', shortUrl);
         res.status(404).json({ error: 'short URL not found' });
       }
     })
-    .catch((err) => {
-      console.error("Error finding URL:", err); // Log findOne errors
+    .catch(err => {
+      console.error('Error finding URL:', err);
       res.status(500).json({ error: 'database error' });
     });
 });
 
-
-app.listen(port, function() {
+app.listen(port, function () {
   console.log(`Listening on port ${port}`);
 });
